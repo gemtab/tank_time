@@ -8,7 +8,7 @@
   "orientation": "portrait",
   "icons": [
     {
-      "src": "icon.png",
+      "src": "/tank_time/icon.png",
       "sizes": "512x512",
       "type": "image/png"
     }
