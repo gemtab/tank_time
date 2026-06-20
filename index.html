@@ -19,6 +19,7 @@
         .error { border-left-color: #d93025; color: #ff6b6b; }
         .warning { border-left-color: #f9ab00; color: #fdd835; }
         .output-line { font-size: 18px; margin: 8px 0; }
+        .note { font-size: 14px; color: #aaa; font-style: italic; margin-top: 5px; }
     </style>
 </head>
 <body>
@@ -60,26 +61,40 @@
     };
     function runCalculation() {
         const flow = parseFloat(document.getElementById('flow').value);
-        const psi = parseInt(document.getElementById('psi').value);
+        const inputPsi = parseInt(document.getElementById('psi').value);
         const resultBox = document.getElementById('result');
         resultBox.style.display = "block";
         resultBox.className = "result-box";
-        if (isNaN(psi)) {
+        if (isNaN(inputPsi)) {
             resultBox.innerHTML = "Please enter a valid numeric PSI value.";
             resultBox.classList.add("error");
             return;
         }
-        if (!CHART[flow] || CHART[flow][psi] === undefined) {
-            resultBox.innerHTML = "Value not found on chart. Use standard intervals (600, 800, 1000...).";
+        if (!CHART[flow]) {
+            resultBox.innerHTML = "Flow rate selection error.";
             resultBox.classList.add("error");
             return;
         }
-        const minutesLeft = CHART[flow][psi];
-        if (psi <= 500 || minutesLeft === 0) {
+
+        // Grab all target pressures for this row, sorted from highest to lowest
+        const columns = Object.keys(CHART[flow]).map(Number).sort((a, b) => b - a);
+        let targetPsi = null;
+
+        // Trace down until we hit a column pressure less than or equal to what was input
+        for (let col of columns) {
+            if (inputPsi >= col) {
+                targetPsi = col;
+                break;
+            }
+        }
+
+        if (targetPsi === null || targetPsi <= 500) {
             resultBox.innerHTML = "<strong>Tank pressure is 500 PSI or lower. Replace cylinder immediately!</strong>";
             resultBox.classList.add("error");
             return;
         }
+
+        const minutesLeft = CHART[flow][targetPsi];
         const hours = Math.floor(minutesLeft / 60);
         const mins = minutesLeft % 60;
         const durationStr = hours > 0 ? `${hours}h ${mins}m` : `${mins} mins`;
@@ -87,7 +102,13 @@
         const endTime = new Date(now.getTime() + minutesLeft * 60000);
         const endHours = String(endTime.getHours()).padStart(2, '0');
         const endMins = String(endTime.getMinutes()).padStart(2, '0');
+
         let outputHtml = `<div class="output-line"><strong>Remaining:</strong> ${durationStr}</div><div class="output-line"><strong>End Time:</strong> ${endHours}:${endMins}</div>`;
+        
+        // Append a contextual note if we rounded down for clinical safety
+        if (inputPsi !== targetPsi) {
+            outputHtml += `<div class="note">Calculated safely at the lower ${targetPsi} PSI interval.</div>`;
+        }
         if (minutesLeft < 50) {
             outputHtml += `<div style="margin-top:10px; font-weight:bold;">⚠️ Caution: Under 50min supply!</div>`;
             resultBox.classList.add("warning");
