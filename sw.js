@@ -1,9 +1,10 @@
 const CACHE_NAME = 'tank-time-v1';
 const ASSETS = [
-  './index.html',
-  './manifest.json',
-  './sw.js',
-  './icon.png'
+  '/tank_time/',
+  '/tank_time/index.html',
+  '/tank_time/manifest.json',
+  '/tank_time/sw.js',
+  '/tank_time/icon.png'
 ];
 
 self.addEventListener('install', (e) => {
