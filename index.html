@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tank Time</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1a73e8">
+    <style>
+        body { background: #121212; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; margin: 0; }
+        .container { max-width: 400px; margin: 0 auto; }
+        h2 { text-align: center; color: #1a73e8; margin-bottom: 25px; }
+        .card { background: #1e1e1e; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        label { display: block; margin: 12px 0 6px; font-weight: bold; color: #aaa; }
+        select, input { width: 100%; padding: 12px; background: #2d2d2d; border: 1px solid #444; color: white; border-radius: 6px; font-size: 16px; box-sizing: border-box; }
+        button { width: 100%; padding: 14px; background: #1a73e8; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; margin-top: 20px; cursor: pointer; }
+        button:active { background: #155cb4; }
+        .result-box { margin-top: 25px; padding: 15px; background: #252525; border-left: 4px solid #1a73e8; border-radius: 4px; display: none; }
+        .error { border-left-color: #d93025; color: #ff6b6b; }
+        .warning { border-left-color: #f9ab00; color: #fdd835; }
+        .output-line { font-size: 18px; margin: 8px 0; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>Tank Time</h2>
+    <div class="card">
+        <label for="flow">Flow Rate (LPM)</label>
+        <select id="flow">
+            <option value="0.5">0.5</option>
+            <option value="1">1</option>
+            <option value="1.5">1.5</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4" selected>4</option>
+            <option value="6">6</option>
+            <option value="8">8</option>
+            <option value="15">15</option>
+        </select>
+        <label for="psi">Tank Pressure (PSI)</label>
+        <input type="number" id="psi" placeholder="e.g., 1600" inputmode="numeric">
+        <button onclick="runCalculation()">Calculate Duration</button>
+        <div id="result" class="result-box"></div>
+    </div>
+</div>
+<script>
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('sw.js');
+    }
+    const CHART = {
+        0.5: {2200: 1065, 2000: 940, 1800: 815, 1600: 690, 1400: 565, 1200: 435, 1000: 310, 800: 185, 600: 60, 500: 0},
+        1:   {2200: 530,  2000: 470, 1800: 405, 1600: 345, 1400: 280, 1200: 220, 1000: 155, 800: 90,  600: 30, 500: 0},
+        1.5: {2200: 355,  2000: 310, 1800: 270, 1600: 230, 1400: 185, 1200: 145, 1000: 105, 800: 60,  600: 20, 500: 0},
+        2:   {2200: 265,  2000: 235, 1800: 200, 1600: 170, 1400: 140, 1200: 110, 1000: 75,  800: 45,  600: 15, 500: 0},
+        3:   {2200: 175,  2000: 155, 1800: 135, 1600: 115, 1400: 90,  1200: 70,  1000: 50,  800: 30,  600: 10, 500: 0},
+        4:   {2200: 130,  2000: 115, 1800: 100, 1600: 85,  1400: 70,  1200: 55,  1000: 35,  800: 20,  600: 5,  500: 0},
+        6:   {2200: 85,   2000: 75,  1800: 65,  1600: 55,  1400: 45,  1200: 35,  1000: 25,  800: 15,  600: 5,  500: 0},
+        8:   {2200: 65,   2000: 55,  1800: 50,  1600: 40,  1400: 35,  1200: 25,  1000: 20,  800: 10,  600: 0,  500: 0},
+        15:  {2200: 35,   2000: 30,  1800: 25,  1600: 20,  1400: 15,  1200: 15,  1000: 10,  800: 5,   600: 0,  500: 0}
+    };
+    function runCalculation() {
+        const flow = parseFloat(document.getElementById('flow').value);
+        const psi = parseInt(document.getElementById('psi').value);
+        const resultBox = document.getElementById('result');
+        resultBox.style.display = "block";
+        resultBox.className = "result-box";
+        if (isNaN(psi)) {
+            resultBox.innerHTML = "Please enter a valid numeric PSI value.";
+            resultBox.classList.add("error");
+            return;
+        }
+        if (!CHART[flow] || CHART[flow][psi] === undefined) {
+            resultBox.innerHTML = "Value not found on chart. Use standard intervals (600, 800, 1000...).";
+            resultBox.classList.add("error");
+            return;
+        }
+        const minutesLeft = CHART[flow][psi];
+        if (psi <= 500 || minutesLeft === 0) {
+            resultBox.innerHTML = "<strong>Tank pressure is 500 PSI or lower. Replace cylinder immediately!</strong>";
+            resultBox.classList.add("error");
+            return;
+        }
+        const hours = Math.floor(minutesLeft / 60);
+        const mins = minutesLeft % 60;
+        const durationStr = hours > 0 ? `${hours}h ${mins}m` : `${mins} mins`;
+        const now = new Date();
+        const endTime = new Date(now.getTime() + minutesLeft * 60000);
+        const endHours = String(endTime.getHours()).padStart(2, '0');
+        const endMins = String(endTime.getMinutes()).padStart(2, '0');
+        let outputHtml = `<div class="output-line"><strong>Remaining:</strong> ${durationStr}</div><div class="output-line"><strong>End Time:</strong> ${endHours}:${endMins}</div>`;
+        if (minutesLeft < 50) {
+            outputHtml += `<div style="margin-top:10px; font-weight:bold;">⚠️ Caution: Under 50min supply!</div>`;
+            resultBox.classList.add("warning");
+        }
+        resultBox.innerHTML = outputHtml;
+    }
+</script>
+</body>
+</html>
