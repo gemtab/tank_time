@@ -6,11 +6,14 @@
     <title>Tank Time</title>
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#1a73e8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="apple-touch-icon" href="icon.png">
     <style>
         body { background: #121212; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; margin: 0; }
         .container { max-width: 400px; margin: 0 auto; }
-        h2 { text-align: center; color: #1a73e8; margin-bottom: 25px; }
-        .card { background: #1e1e1e; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        h2 { text-align: center; color: #1a73e8; margin-bottom: 25px; margin-top: 10px; }
+        .card { background: #1e1e1e; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); margin-bottom: 25px; }
         label { display: block; margin: 12px 0 6px; font-weight: bold; color: #aaa; }
         select, input { width: 100%; padding: 12px; background: #2d2d2d; border: 1px solid #444; color: white; border-radius: 6px; font-size: 16px; box-sizing: border-box; }
         button { width: 100%; padding: 14px; background: #1a73e8; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; margin-top: 20px; cursor: pointer; }
@@ -20,11 +23,19 @@
         .warning { border-left-color: #f9ab00; color: #fdd835; }
         .output-line { font-size: 18px; margin: 8px 0; }
         .note { font-size: 14px; color: #aaa; font-style: italic; margin-top: 5px; }
+        
+        /* New Tap Counter UI styles */
+        .tap-btn { background: #2d2d2d; border: 2px dashed #1a73e8; height: 100px; font-size: 18px; display: flex; align-items: center; justify-content: center; border-radius: 8px; margin-top: 15px; user-select: none; transition: background 0.1s; }
+        .tap-btn:active { background: #3d3d3d; }
+        .counter-status { text-align: center; font-size: 14px; color: #aaa; margin-top: 10px; }
+        .apnea-alert { background: #7a1d1d !important; border-left-color: #ff4444 !important; color: #ffcccc !important; display: block !important; animation: blink 1s infinite; }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
     </style>
 </head>
 <body>
 <div class="container">
     <h2>Tank Time</h2>
+    
     <div class="card">
         <label for="flow">Flow Rate (LPM)</label>
         <select id="flow">
@@ -43,11 +54,23 @@
         <button onclick="runCalculation()">Calculate Duration</button>
         <div id="result" class="result-box"></div>
     </div>
+
+    <div class="card">
+        <label>PACU Breath Counter</label>
+        <div class="tap-btn" id="tapButton" onmousedown="handleBreathTap(event)" ontouchstart="handleBreathTap(event)">
+            Tap On Each Inspiration
+        </div>
+        <div class="counter-status" id="tapStatus">Awaiting first breath...</div>
+        <div id="rrResult" class="result-box"></div>
+    </div>
 </div>
+
 <script>
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('sw.js');
     }
+
+    // Oxygen Calculator Logic
     const CHART = {
         0.5: {2200: 1065, 2000: 940, 1800: 815, 1600: 690, 1400: 565, 1200: 435, 1000: 310, 800: 185, 600: 60, 500: 0},
         1:   {2200: 530,  2000: 470, 1800: 405, 1600: 345, 1400: 280, 1200: 220, 1000: 155, 800: 90,  600: 30, 500: 0},
@@ -59,6 +82,7 @@
         8:   {2200: 65,   2000: 55,  1800: 50,  1600: 40,  1400: 35,  1200: 25,  1000: 20,  800: 10,  600: 0,  500: 0},
         15:  {2200: 35,   2000: 30,  1800: 25,  1600: 20,  1400: 15,  1200: 15,  1000: 10,  800: 5,   600: 0,  500: 0}
     };
+
     function runCalculation() {
         const flow = parseFloat(document.getElementById('flow').value);
         const inputPsi = parseInt(document.getElementById('psi').value);
@@ -70,30 +94,16 @@
             resultBox.classList.add("error");
             return;
         }
-        if (!CHART[flow]) {
-            resultBox.innerHTML = "Flow rate selection error.";
-            resultBox.classList.add("error");
-            return;
-        }
-
-        // Grab all target pressures for this row, sorted from highest to lowest
         const columns = Object.keys(CHART[flow]).map(Number).sort((a, b) => b - a);
         let targetPsi = null;
-
-        // Trace down until we hit a column pressure less than or equal to what was input
         for (let col of columns) {
-            if (inputPsi >= col) {
-                targetPsi = col;
-                break;
-            }
+            if (inputPsi >= col) { targetPsi = col; break; }
         }
-
         if (targetPsi === null || targetPsi <= 500) {
             resultBox.innerHTML = "<strong>Tank pressure is 500 PSI or lower. Replace cylinder immediately!</strong>";
             resultBox.classList.add("error");
             return;
         }
-
         const minutesLeft = CHART[flow][targetPsi];
         const hours = Math.floor(minutesLeft / 60);
         const mins = minutesLeft % 60;
@@ -102,18 +112,77 @@
         const endTime = new Date(now.getTime() + minutesLeft * 60000);
         const endHours = String(endTime.getHours()).padStart(2, '0');
         const endMins = String(endTime.getMinutes()).padStart(2, '0');
-
         let outputHtml = `<div class="output-line"><strong>Remaining:</strong> ${durationStr}</div><div class="output-line"><strong>End Time:</strong> ${endHours}:${endMins}</div>`;
-        
-        // Append a contextual note if we rounded down for clinical safety
-        if (inputPsi !== targetPsi) {
-            outputHtml += `<div class="note">Calculated safely at the lower ${targetPsi} PSI interval.</div>`;
-        }
-        if (minutesLeft < 50) {
-            outputHtml += `<div style="margin-top:10px; font-weight:bold;">⚠️ Caution: Under 50min supply!</div>`;
-            resultBox.classList.add("warning");
-        }
+        if (inputPsi !== targetPsi) { outputHtml += `<div class="note">Calculated safely at lower ${targetPsi} PSI interval.</div>`; }
+        if (minutesLeft < 50) { outputHtml += `<div style="margin-top:10px; font-weight:bold;">⚠️ Caution: Under 50min supply!</div>`; resultBox.classList.add("warning"); }
         resultBox.innerHTML = outputHtml;
+    }
+
+    // New Respiratory Tapper & Apnea Guard Logic
+    let tapTimes = [];
+    let apneaTimer = null;
+
+    function handleBreathTap(event) {
+        event.preventDefault(); // Stifles double-trigger zoom behaviors on mobile
+        
+        // Haptic feedback for supported mobile devices (Android)
+        if (navigator.vibrate) { navigator.vibrate(40); }
+
+        const currentTime = Date.now();
+        
+        // Clear background check if a new breath occurs
+        clearTimeout(apneaTimer);
+        
+        tapTimes.push(currentTime);
+        const count = tapTimes.length;
+        
+        const statusLabel = document.getElementById('tapStatus');
+        const rrResult = document.getElementById('rrResult');
+        
+        if (count === 1) {
+            rrResult.style.display = "none";
+            rrResult.className = "result-box";
+            statusLabel.innerHTML = "Breath 1 recorded. Awaiting second...";
+            startApneaCheck();
+        } 
+        else if (count === 2) {
+            statusLabel.innerHTML = "Breath 2 recorded. Need 1 more tap...";
+            startApneaCheck();
+        } 
+        else if (count === 3) {
+            statusLabel.innerHTML = "Calculation complete.";
+            
+            // Math calculation: Total duration of 2 complete breath cycles in seconds
+            const totalDurationSec = (tapTimes[2] - tapTimes[0]) / 1000;
+            
+            // Extrapolate breath-per-minute rate: (2 cycles / totalDuration) * 60 seconds
+            const calculatedRR = Math.round((2 / totalDurationSec) * 60);
+            
+            rrResult.style.display = "block";
+            rrResult.className = "result-box";
+            rrResult.innerHTML = `<div class="output-line"><strong>Respiratory Rate:</strong> ${calculatedRR} BPM</div>`;
+            
+            if (calculatedRR < 10 || calculatedRR > 24) {
+                rrResult.classList.add("warning");
+            }
+            
+            // Reset storage tracker array for next use sequence
+            tapTimes = [];
+        }
+    }
+
+    function startApneaCheck() {
+        // Set an active evaluation threshold alert trigger at 15 seconds
+        apneaTimer = setTimeout(() => {
+            const rrResult = document.getElementById('rrResult');
+            rrResult.style.display = "block";
+            rrResult.className = "result-box apnea-alert";
+            rrResult.innerHTML = `<div class="output-line" style="text-align:center;"><strong>⚠️ APNEA WARNING<br>No breath detected for 15+ seconds!</strong></div>`;
+            
+            // Reset trackers
+            tapTimes = [];
+            document.getElementById('tapStatus').innerHTML = "Resetting monitor...";
+        }, 15000);
     }
 </script>
 </body>
