@@ -18,6 +18,10 @@
         select, input { width: 100%; padding: 12px; background: #2d2d2d; border: 1px solid #444; color: white; border-radius: 6px; font-size: 16px; box-sizing: border-box; }
         button { width: 100%; padding: 14px; background: #1a73e8; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; margin-top: 20px; cursor: pointer; }
         button:active { background: #155cb4; }
+        button.secondary { background: #333; color: #aaa; border: 1px solid #555; }
+        button.secondary:active { background: #444; }
+        .btn-group { display: flex; gap: 10px; margin-top: 15px; }
+        .btn-group button { margin-top: 0; }
         .result-box { margin-top: 20px; padding: 15px; background: #252525; border-left: 4px solid #1a73e8; border-radius: 4px; display: none; }
         .error { border-left-color: #d93025; color: #ff6b6b; }
         .warning { border-left-color: #f9ab00; color: #fdd835; }
@@ -37,6 +41,10 @@
         .counter-status { text-align: center; font-size: 14px; color: #aaa; margin-top: 10px; }
         .apnea-alert { background: #7a1d1d !important; border-left-color: #ff4444 !important; color: #ffcccc !important; display: block !important; animation: blink 1s infinite; }
         @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        
+        /* Metronome visual pulse indicator */
+        .metro-pulse { animation: flash 0.3s ease-out; }
+        @keyframes flash { 0% { background-color: #1a73e8; } 100% { background-color: #1e1e1e; } }
     </style>
 </head>
 <body>
@@ -75,7 +83,7 @@
             <div id="rrResult" class="result-box"></div>
         </div>
 
-        <!-- IV Drip Rate Counter (Fixed 10 drop/mL) -->
+        <!-- IV Drip Rate Tapper (Fixed 10 drop/mL) -->
         <div class="card">
             <label>IV Rate Tapper (10 gtt/mL)</label>
             <div class="tap-btn" id="ivTapButton" onmousedown="handleIvTap(event)" ontouchstart="handleIvTap(event)">
@@ -84,6 +92,22 @@
             <div class="counter-status" id="ivTapStatus">Awaiting first drop...</div>
             <div id="ivResult" class="result-box"></div>
         </div>
+    </div>
+
+    <!-- IV Metronome / Roller Clamp Guide Card -->
+    <div class="card" id="metroCard">
+        <label for="metroRate">IV Metronome (10 gtt/mL Set)</label>
+        <input type="number" id="metroRate" placeholder="Target Rate in mL/hr (e.g. 120)" inputmode="numeric" pattern="[0-9]*" oninput="updateMetroInfo()">
+        
+        <div id="metroInfo" class="note" style="margin-top: 10px; font-size: 15px;">
+            Enter target mL/hr above to compute drop rhythm.
+        </div>
+
+        <div class="btn-group">
+            <button id="syncBtn" onclick="syncMetronome()" style="flex: 2;">Start / Sync Drop</button>
+            <button id="pauseBtn" class="secondary" onclick="stopMetronome()" style="flex: 1;">Pause</button>
+        </div>
+        <div class="counter-status" id="metroStatus">Metronome stopped</div>
     </div>
 </div>
 
@@ -145,8 +169,7 @@
     let apneaTimer = null;
 
     function handleBreathTap(event) {
-        event.preventDefault(); // Stifles double-trigger zoom behaviors on mobile
-        
+        event.preventDefault();
         if (navigator.vibrate) { navigator.vibrate(40); }
 
         const currentTime = Date.now();
@@ -228,11 +251,7 @@
         else if (count === 4) {
             statusLabel.innerHTML = "Calculation complete.";
 
-            // Duration over 3 intervals (4 taps) in seconds
             const totalSec = (ivTapTimes[3] - ivTapTimes[0]) / 1000;
-            
-            // Formula for 10 gtt/mL set: 
-            // mL/hr = (3600 / (10 * (totalSec / 3))) = (360 * 3) / totalSec
             const mlPerHour = Math.round((1080 / totalSec));
             const gttPerMin = Math.round((180 / totalSec));
 
@@ -248,11 +267,97 @@
     }
 
     function startIvTimeout() {
-        // Automatically resets array if idle for more than 8 seconds mid-sequence
         ivResetTimer = setTimeout(() => {
             ivTapTimes = [];
             document.getElementById('ivTapStatus').innerHTML = "Session timed out. Tap to start over.";
         }, 8000);
+    }
+
+    // IV Metronome / Roller Clamp Guide Logic
+    let metroIntervalId = null;
+    let audioCtx = null;
+
+    function updateMetroInfo() {
+        const rateInput = parseFloat(document.getElementById('metroRate').value);
+        const infoDiv = document.getElementById('metroInfo');
+        
+        if (isNaN(rateInput) || rateInput <= 0) {
+            infoDiv.innerHTML = "Enter target mL/hr above to compute drop rhythm.";
+            return;
+        }
+
+        // For a 10 gtt/mL set: interval (sec) = 360 / (mL/hr)
+        const intervalSec = (360 / rateInput).toFixed(1);
+        const dropsPerMin = Math.round(rateInput / 6);
+        
+        infoDiv.innerHTML = `<strong>1 drop every ${intervalSec} sec</strong> (${dropsPerMin} gtt/min)`;
+    }
+
+    function playBeep() {
+        // Haptic feedback (100ms vibration)
+        if (navigator.vibrate) { navigator.vibrate(100); }
+
+        // Flash visual background
+        const card = document.getElementById('metroCard');
+        card.classList.remove('metro-pulse');
+        void card.offsetWidth; // Force CSS reflow
+        card.classList.add('metro-pulse');
+
+        // Web Audio API backup click sound
+        try {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(800, audioCtx.currentTime); // 800 Hz pitch
+            gain.gain.setValueAtTime(0.1, audioCtx.currentTime);     // Soft volume
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.05);
+        } catch (e) {
+            // Audio context not allowed or unsupported
+        }
+    }
+
+    function syncMetronome() {
+        const rateInput = parseFloat(document.getElementById('metroRate').value);
+        const statusDiv = document.getElementById('metroStatus');
+
+        if (isNaN(rateInput) || rateInput <= 0) {
+            statusDiv.innerHTML = "<span style='color:#ff6b6b;'>Please enter a valid target rate first!</span>";
+            return;
+        }
+
+        // Clear existing interval timer to resync to current tap timestamp
+        if (metroIntervalId) {
+            clearInterval(metroIntervalId);
+        }
+
+        const intervalMs = (360 / rateInput) * 1000;
+
+        // Buzz immediately on drop sync tap
+        playBeep();
+        statusDiv.innerHTML = `Metronome active (buzzing every ${(intervalMs / 1000).toFixed(1)}s)`;
+
+        // Start repeating cycle
+        metroIntervalId = setInterval(() => {
+            playBeep();
+        }, intervalMs);
+    }
+
+    function stopMetronome() {
+        if (metroIntervalId) {
+            clearInterval(metroIntervalId);
+            metroIntervalId = null;
+        }
+        document.getElementById('metroStatus').innerHTML = "Metronome paused";
     }
 </script>
 </body>
