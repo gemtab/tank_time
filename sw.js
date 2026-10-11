@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tank-time-v2';
+const CACHE_NAME = 'tank-time-v3'; // Incremented to force full cache purge
 const ASSETS = [
   '/tank_time/',
   '/tank_time/index.html',
@@ -9,34 +9,32 @@ const ASSETS = [
 
 // Install Event - Pre-cache essential files
 self.addEventListener('install', (e) => {
-  // Force the waiting service worker to become active immediately
-  self.skipWaiting();
+  self.skipWaiting(); // Instantly replace old waiting workers
   e.waitUntil(
     caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
   );
 });
 
-// Activate Event - Clean up old cache versions (v1, etc.)
+// Activate Event - Clear old cache versions (v1, v2, etc.)
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cache) => {
           if (cache !== CACHE_NAME) {
-            return caches.delete(cache);
+            return caches.delete(cache); // Wipes out old cached version
           }
         })
       );
-    }).then(() => self.clients.claim()) // Immediately take control of open tabs
+    }).then(() => self.clients.claim()) // Immediately take control of all active tabs
   );
 });
 
-// Fetch Event - Network-first for HTML, fallback to cache
+// Fetch Event - Try network first, fall back to cache if offline
 self.addEventListener('fetch', (e) => {
   e.respondWith(
     fetch(e.request)
       .then((networkResponse) => {
-        // If network request succeeds, update the cache copy in the background
         if (networkResponse && networkResponse.status === 200 && e.request.method === 'GET') {
           const responseToCache = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
@@ -46,7 +44,6 @@ self.addEventListener('fetch', (e) => {
         return networkResponse;
       })
       .catch(() => {
-        // Fallback to cache if offline
         return caches.match(e.request);
       })
   );
